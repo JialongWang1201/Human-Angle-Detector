@@ -340,27 +340,38 @@ def pixel_offset_to_angle_deg(pixel_offset, frame_width):
 
 
 def get_torso_center_x(landmarks, pose_module, frame_width):
-    landmark_specs = (
+    left_specs = (
         (pose_module.PoseLandmark.LEFT_SHOULDER, 1.4),
-        (pose_module.PoseLandmark.RIGHT_SHOULDER, 1.4),
         (pose_module.PoseLandmark.LEFT_HIP, 1.0),
+    )
+    right_specs = (
+        (pose_module.PoseLandmark.RIGHT_SHOULDER, 1.4),
         (pose_module.PoseLandmark.RIGHT_HIP, 1.0),
     )
     weighted_x = 0.0
     total_weight = 0.0
-    visible_points = 0
+    left_visible = 0
+    right_visible = 0
 
-    for landmark_enum, base_weight in landmark_specs:
+    for landmark_enum, base_weight in left_specs:
         landmark = landmarks[landmark_enum.value]
         if landmark.visibility < TORSO_VISIBILITY_MIN:
             continue
-
         weight = base_weight * (landmark.visibility ** 2)
         weighted_x += landmark.x * frame_width * weight
         total_weight += weight
-        visible_points += 1
+        left_visible += 1
 
-    if visible_points < 2 or total_weight <= 0.0:
+    for landmark_enum, base_weight in right_specs:
+        landmark = landmarks[landmark_enum.value]
+        if landmark.visibility < TORSO_VISIBILITY_MIN:
+            continue
+        weight = base_weight * (landmark.visibility ** 2)
+        weighted_x += landmark.x * frame_width * weight
+        total_weight += weight
+        right_visible += 1
+
+    if left_visible == 0 or right_visible == 0 or total_weight <= 0.0:
         return None
 
     return int(weighted_x / total_weight)
