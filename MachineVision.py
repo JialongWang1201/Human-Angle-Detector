@@ -107,6 +107,12 @@ AIM_STABLE_FRAMES_REQUIRED = 8
 SAFE_ZONE_MARGIN_RATIO = 0.15
 FIRE_FLASH_SECONDS = 0.25
 
+# --- AUTO FIRE CONFIG ---
+# AUTO_FIRE_MODE=1: fires automatically when player is stable in safe zone.
+# AUTO_FIRE_MODE=0 (default): requires double down-stroke gesture to fire.
+AUTO_FIRE_MODE = os.environ.get("AUTO_FIRE_MODE", "0") == "1"
+AUTO_FIRE_STABLE_FRAMES = max(1, int(os.environ.get("AUTO_FIRE_STABLE_FRAMES", "30")))
+
 STATE_TRACKING = "TRACKING"
 STATE_ARMED = "ARMED"
 STATE_FIRE = "FIRE"
@@ -443,7 +449,9 @@ def main():
         print(f"  Acquire frames:    {SEARCH_TARGET_CONFIRM_FRAMES}")
         print(f"  Lock tolerance:    {AIM_LOCK_TOLERANCE_DEG:.2f} degrees")
         print(f"  Torso vis min:     {TORSO_VISIBILITY_MIN:.2f}")
-        print(f"  Trigger:   Double down-stroke")
+        print(f"  Trigger:   {'AUTO (stable+safe zone)' if AUTO_FIRE_MODE else 'Manual double down-stroke'}")
+        if AUTO_FIRE_MODE:
+            print(f"  Auto stable frames: {AUTO_FIRE_STABLE_FRAMES}")
         print(f"  Motor:     {motor.mode}")
         print("---------------------------------------")
 
@@ -590,23 +598,10 @@ def main():
             motor_moved = motor.update(dt)
 
             if person_detected and not searching:
-                if turret_state == STATE_TRACKING:
-                    if downstroke:
-                        turret_state = STATE_ARMED
-                        armed_start_time = now
-                        first_strike_time = now
-                        last_gate_reason = "ARMED_1ST_STRIKE"
-
-                elif turret_state == STATE_ARMED:
-                    if now - armed_start_time > ARMED_TIMEOUT_SECONDS:
-                        turret_state = STATE_TRACKING
-                        last_gate_reason = "ARM_TIMEOUT"
-                    elif downstroke:
-                        if now - first_strike_time > DOUBLE_STRIKE_WINDOW_SECONDS:
-                            armed_start_time = now
-                            first_strike_time = now
-                            last_gate_reason = "REARMED"
-                        else:
+                if AUTO_FIRE_MODE:
+                    # Auto-fire: no gesture needed, fires when stable + in safe zone
+                    if turret_state == STATE_TRACKING:
+                        if stable_frame_count >= AUTO_FIRE_STABLE_FRAMES:
                             can_fire, gate_reason = fire_gate_ok(
                                 now,
                                 last_fire_time,
@@ -618,8 +613,39 @@ def main():
                             if can_fire:
                                 turret_state = STATE_FIRE
                             else:
-                                turret_state = STATE_TRACKING
-                                print(f">>> FIRE BLOCKED: {gate_reason}")
+                                print(f">>> AUTO FIRE BLOCKED: {gate_reason}")
+                else:
+                    # Manual gesture mode: double down-stroke to fire
+                    if turret_state == STATE_TRACKING:
+                        if downstroke:
+                            turret_state = STATE_ARMED
+                            armed_start_time = now
+                            first_strike_time = now
+                            last_gate_reason = "ARMED_1ST_STRIKE"
+
+                    elif turret_state == STATE_ARMED:
+                        if now - armed_start_time > ARMED_TIMEOUT_SECONDS:
+                            turret_state = STATE_TRACKING
+                            last_gate_reason = "ARM_TIMEOUT"
+                        elif downstroke:
+                            if now - first_strike_time > DOUBLE_STRIKE_WINDOW_SECONDS:
+                                armed_start_time = now
+                                first_strike_time = now
+                                last_gate_reason = "REARMED"
+                            else:
+                                can_fire, gate_reason = fire_gate_ok(
+                                    now,
+                                    last_fire_time,
+                                    fire_history,
+                                    stable_frame_count,
+                                    in_safe_zone,
+                                )
+                                last_gate_reason = gate_reason
+                                if can_fire:
+                                    turret_state = STATE_FIRE
+                                else:
+                                    turret_state = STATE_TRACKING
+                                    print(f">>> FIRE BLOCKED: {gate_reason}")
             elif (
                 turret_state == STATE_ARMED
                 and now - armed_start_time > ARMED_TIMEOUT_SECONDS
